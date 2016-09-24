@@ -29,7 +29,7 @@
     database: Whisper.Database,
     storeName: 'conversations',
     defaults: function() {
-      return { unreadCount : 0 };
+      return { unreadCount : 0, muted : null };
     },
 
     handleMessageError: function(message, errors) {
@@ -725,6 +725,17 @@
         return this.get('type') === 'private';
     },
 
+    muteConversation: function() {
+        if (this.get('muted')) {
+            this.save({'muted': false});
+        } else {
+            this.save({'muted': true});
+        }
+    },
+    getMutedState: function() {
+      return this.get('muted');
+    },
+
     revokeAvatarUrl: function() {
         if (this.avatarUrl) {
             URL.revokeObjectURL(this.avatarUrl);
@@ -794,6 +805,9 @@
     },
 
     notify: function(message) {
+        if (this.getMutedState()) {
+            return;
+        }
         if (!message.isIncoming()) {
             return;
         }
