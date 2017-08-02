@@ -1,5 +1,12 @@
 (function () {
   'use strict';
+
+  // we need nodeIntegration for file access in backup.js, but components like jQuery
+  //   check for the existence of 'module' to determine how to set themselves up. We want
+  //   them to behave like they're in the browser.
+  delete window.exports;
+  delete window.module;
+
   console.log('preload');
   const electron = require('electron')
 

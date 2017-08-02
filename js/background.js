@@ -74,7 +74,7 @@
                 initialLoadComplete: initialLoadComplete
             });
         } else {
-            appView.openInstaller();
+            appView.openInstallChoice();
         }
 
         Whisper.events.on('showDebugLog', function() {

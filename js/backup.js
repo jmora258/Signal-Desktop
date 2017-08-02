@@ -2,10 +2,12 @@
   'use strict';
   window.Whisper = window.Whisper || {};
 
-  function stringToBlob(string) {
-    var buffer = dcodeIO.ByteBuffer.wrap(string).toArrayBuffer();
-    return new Blob([buffer]);
-  }
+  var electronRemote = require('electron').remote;
+  var dialog = electronRemote.dialog;
+  var BrowserWindow = electronRemote.BrowserWindow;
+
+  var fs = require('fs');
+  var path = require('path');
 
   function stringify(object) {
     for (var key in object) {
@@ -41,24 +43,36 @@
     return object;
   }
 
-  function createOutputStream(fileWriter) {
+  function createOutputStream(writer) {
     var wait = Promise.resolve();
-    var count = 0;
     return {
       write: function(string) {
-        var i = count++;
         wait = wait.then(function() {
           return new Promise(function(resolve, reject) {
-            fileWriter.onwriteend = resolve;
-            fileWriter.onerror = reject;
-            fileWriter.onabort = reject;
-            fileWriter.write(stringToBlob(string));
+            writer.once('error', reject);
+
+            if (writer.write(string)) {
+              return resolve();
+            }
+
+            //  If write() returns true, we don't need to wait for the drain event
+            //   https://nodejs.org/dist/latest-v7.x/docs/api/stream.html#stream_class_stream_writable
+            writer.once('drain', resolve);
           });
         });
         return wait;
       },
       wait: function() {
         return wait;
+      },
+      close: function() {
+        return wait.then(function() {
+          return new Promise(function(resolve, reject) {
+            writer.once('finish', resolve);
+            writer.once('error', reject);
+            writer.end();
+          });
+        });
       }
     };
   }
@@ -88,7 +102,7 @@
       stream.write('{');
 
       _.each(storeNames, function(storeName) {
-        var transaction = idb_db.transaction(storeNames, "readwrite");
+        var transaction = idb_db.transaction(storeNames, 'readwrite');
         transaction.onerror = function(error) {
           console.log(
             'exportToJsonFile: transaction error',
@@ -132,7 +146,9 @@
               stream.write(',');
             } else {
               console.log('Exported all stores');
-              stream.write('}').then(function() {
+              stream.write('}');
+
+              stream.close().then(function() {
                 console.log('Finished writing all stores to disk');
                 resolve();
               });
@@ -161,13 +177,19 @@
       var importObject = JSON.parse(jsonString);
       var storeNames = _.keys(importObject);
 
-      console.log('Importing to these stores:', storeNames);
+      console.log('Importing to these stores:', storeNames.join(', '));
 
-      var transaction = idb_db.transaction(storeNames, "readwrite");
+      var transaction = idb_db.transaction(storeNames, 'readwrite');
       transaction.onerror = reject;
 
       _.each(storeNames, function(storeName) {
           console.log('Importing items for store', storeName);
+
+          if (!importObject[storeName].length) {
+            delete importObject[storeName];
+            return;
+          }
+
           var count = 0;
           _.each(importObject[storeName], function(toAdd) {
               toAdd = unstringify(toAdd);
@@ -221,52 +243,56 @@
   }
 
   function createDirectory(parent, name) {
-    var sanitized = sanitizeFileName(name);
     return new Promise(function(resolve, reject) {
-      parent.getDirectory(sanitized, {create: true, exclusive: true}, resolve, reject);
+      var sanitized = sanitizeFileName(name);
+      var targetDir = path.join(parent, sanitized);
+      fs.mkdir(targetDir, function(error) {
+        if (error) {
+          return rject(error);
+        }
+
+        return resolve(targetDir);
+      });
     });
   }
 
   function createFileAndWriter(parent, name) {
-    var sanitized = sanitizeFileName(name);
-    return new Promise(function(resolve, reject) {
-      parent.getFile(sanitized, {create: true, exclusive: true}, function(file) {
-        return file.createWriter(function(writer) {
-          resolve(writer);
-        }, reject);
-      }, reject);
+    return new Promise(function(resolve) {
+      var sanitized = sanitizeFileName(name);
+      var targetPath = path.join(parent, sanitized);
+      var options = {
+        flags: 'wx'
+      };
+      return resolve(fs.createWriteStream(targetPath, options));
     });
   }
 
   function readFileAsText(parent, name) {
     return new Promise(function(resolve, reject) {
-      parent.getFile(name, {create: false, exclusive: true}, function(fileEntry) {
-        fileEntry.file(function(file) {
-          var reader = new FileReader();
-          reader.onload = function(e) {
-            resolve(e.target.result);
-          };
-          reader.onerror = reject;
-          reader.onabort = reject;
-          reader.readAsText(file);
-        }, reject);
-      }, reject);
+      var targetPath = path.join(parent, name);
+      fs.readFile(targetPath, 'utf8', function(error, string) {
+        if (error) {
+          return reject(error);
+        }
+
+        return resolve(string);
+      });
     });
   }
 
   function readFileAsArrayBuffer(parent, name) {
     return new Promise(function(resolve, reject) {
-      parent.getFile(name, {create: false, exclusive: true}, function(fileEntry) {
-        fileEntry.file(function(file) {
-          var reader = new FileReader();
-          reader.onload = function(e) {
-            resolve(e.target.result);
-          };
-          reader.onerror = reject;
-          reader.onabort = reject;
-          reader.readAsArrayBuffer(file);
-        }, reject);
-      }, reject);
+      var targetPath = path.join(parent, name);
+      // omitting the encoding to get a buffer back
+      fs.readFile(targetPath, function(error, buffer) {
+        if (error) {
+          return reject(error);
+        }
+
+        // Buffer instances are also Uint8Array instances
+        //   https://nodejs.org/docs/latest/api/buffer.html#buffer_buffers_and_typedarray
+        return resolve(buffer.buffer);
+      });
     });
   }
 
@@ -275,15 +301,14 @@
   }
 
   function readAttachment(parent, message, attachment) {
-    var name = getAttachmentFileName(attachment);
-    var sanitized = sanitizeFileName(name);
-    var attachmentDir = message.received_at;
     return new Promise(function(resolve, reject) {
-      parent.getDirectory(attachmentDir, {create: false, exclusive: true}, function(dir) {
-        return readFileAsArrayBuffer(dir, sanitized ).then(function(contents) {
-          attachment.data = contents;
-          return resolve();
-        }, reject);
+      var name = getAttachmentFileName(attachment);
+      var sanitized = sanitizeFileName(name);
+      var attachmentDir = path.join(parent, message.received_at.toString());
+
+      return readFileAsArrayBuffer(attachmentDir, sanitized).then(function(contents) {
+        attachment.data = contents;
+        return resolve();
       }, reject);
     });
   }
@@ -292,7 +317,8 @@
     var filename = getAttachmentFileName(attachment);
     return createFileAndWriter(dir, filename).then(function(writer) {
       var stream = createOutputStream(writer);
-      return stream.write(attachment.data);
+      stream.write(new Buffer(attachment.data));
+      return stream.close();
     });
   }
 
@@ -320,7 +346,7 @@
     console.log('exporting conversation', name);
     return createFileAndWriter(dir, 'messages.json').then(function(writer) {
       return new Promise(function(resolve, reject) {
-        var transaction = idb_db.transaction('messages', "readwrite");
+        var transaction = idb_db.transaction('messages', 'readwrite');
         transaction.onerror = function(e) {
           console.log(
             'exportConversation transaction error for conversation',
@@ -382,8 +408,9 @@
             count += 1;
             cursor.continue();
           } else {
-            var promise = stream.write(']}');
-            promiseChain = promiseChain.then(promise);
+            stream.write(']}');
+
+            promiseChain = stream.close().promiseChain.then(promise);
 
             return promiseChain.then(function() {
               console.log('done exporting conversation', name);
@@ -421,7 +448,7 @@
 
   function exportConversations(idb_db, parentDir) {
     return new Promise(function(resolve, reject) {
-      var transaction = idb_db.transaction('conversations', "readwrite");
+      var transaction = idb_db.transaction('conversations', 'readwrite');
       transaction.onerror = function(e) {
         console.log(
           'exportConversations: transaction error:',
@@ -467,44 +494,40 @@
     });
   }
 
-  function getDirectory() {
+  function getDirectory(options) {
     return new Promise(function(resolve, reject) {
-      var w = extension.windows.getViews()[0];
-      if (w && w.chrome && w.chrome.fileSystem) {
-        w.chrome.fileSystem.chooseEntry({
-          type: 'openDirectory'
-        }, function(entry) {
-          if (!entry) {
-            var error = new Error('Error choosing directory');
-            error.name = 'ChooseError';
-            reject(error);
-          } else {
-            resolve(entry);
-          }
-        });
-      }
+      var browserWindow = BrowserWindow.getFocusedWindow();
+      var dialogOptions = {
+        title: options.title,
+        properties: ['openDirectory'],
+        buttonLabel: options.buttonLabel
+      };
+
+      dialog.showOpenDialog(browserWindow, dialogOptions, function(directory) {
+        if (!directory || !directory[0]) {
+          var error = new Error('Error choosing directory');
+          error.name = 'ChooseError';
+          return reject(error);
+        }
+
+        return resolve(directory[0]);
+      });
     });
   }
 
   function getDirContents(dir) {
     return new Promise(function(resolve, reject) {
-      var reader = dir.createReader();
-      var contents = [];
+      fs.readdir(dir, function(err, files) {
+        if (err) {
+          return reject(err);
+        }
 
-      var getContents = function() {
-        reader.readEntries(function(results) {
-          if (results.length) {
-            contents = contents.concat(results);
-            getContents();
-          } else {
-            return resolve(contents);
-          }
-        }, function(error) {
-          return reject(error);
+        files = _.map(files, function(file) {
+          return path.join(dir, file);
         });
-      };
 
-      getContents();
+        resolve(files);
+      });
     });
   }
 
@@ -520,10 +543,10 @@
     }
 
     return new Promise(function(resolve, reject) {
-      var transaction = idb_db.transaction('messages', "readwrite");
+      var transaction = idb_db.transaction('messages', 'readwrite');
       transaction.onerror = function(e) {
         console.log(
-          'importConversations transaction error:',
+          'saveAllMessages transaction error:',
           e && e.stack ? e.stack : e
         );
         return reject(e);
@@ -577,7 +600,7 @@
         return saveAllMessages(idb_db, messages);
       });
     }, function() {
-      console.log('Warning: could not access messages.json in directory: ' + dir.fullPath);
+      console.log('Warning: could not access messages.json in directory: ' + dir);
     });
   }
 
@@ -586,7 +609,7 @@
       var promiseChain = Promise.resolve();
 
       _.forEach(contents, function(conversationDir) {
-        if (!conversationDir.isDirectory) {
+        if (!fs.statSync(conversationDir).isDirectory()) {
           return;
         }
 
@@ -601,25 +624,69 @@
     });
   }
 
-  function getDisplayPath(entry) {
-    return new Promise(function(resolve) {
-      chrome.fileSystem.getDisplayPath(entry, function(path) {
-        return resolve(path);
+  function clearAllStores(idb_db) {
+    return new Promise(function(resolve, reject) {
+      console.log('Clearing all indexeddb stores');
+      var storeNames = idb_db.objectStoreNames;
+      var transaction = idb_db.transaction(storeNames, 'readwrite');
+
+      transaction.oncomplete = function() {
+        // unused
+      };
+      transaction.onerror = function(error) {
+        console.log(
+          'saveAllMessages transaction error:',
+          error && error.stack ? error.stack : error
+        );
+        return reject(error);
+      };
+
+      var count = 0;
+      _.forEach(storeNames, function(storeName) {
+        var store = transaction.objectStore(storeName);
+        var request = store.clear();
+
+        request.onsuccess = function() {
+          count += 1;
+          console.log('Done clearing store', storeName);
+
+          if (count >= storeNames.length) {
+            console.log('Done clearing all indexeddb stores');
+            return resolve();
+          }
+        };
+
+        request.onerror = function(error) {
+          console.log(
+            'clearAllStores transaction error:',
+            error && error.stack ? error.stack : error
+          );
+          return reject(error);
+        };
       });
     });
   }
 
   Whisper.Backup = {
+    clearDatabase: function() {
+      return openDatabase().then(function(idb_db) {
+        return clearAllStores(idb_db);
+      });
+    },
     backupToDirectory: function() {
-      return getDirectory().then(function(directoryEntry) {
+      var options = {
+        title: 'Choose target directory for data',
+        buttonLabel: 'Export',
+      };
+      return getDirectory(options).then(function(directory) {
         var idb;
         return openDatabase().then(function(idb_db) {
           idb = idb_db;
-          return exportNonMessages(idb_db, directoryEntry);
+          return exportNonMessages(idb_db, directory);
         }).then(function() {
-          return exportConversations(idb, directoryEntry);
+          return exportConversations(idb, directory);
         }).then(function() {
-          return getDisplayPath(directoryEntry);
+          return directory;
         });
       }).then(function(path) {
         console.log('done backing up!');
@@ -633,15 +700,19 @@
       });
     },
     importFromDirectory: function() {
-      return getDirectory().then(function(directoryEntry) {
+      var options = {
+        title: 'Choose directory with exported data',
+        buttonLabel: 'Import',
+      };
+      return getDirectory(options).then(function(directory) {
         var idb;
         return openDatabase().then(function(idb_db) {
           idb = idb_db;
-          return importNonMessages(idb_db, directoryEntry);
+          return importNonMessages(idb_db, directory);
         }).then(function() {
-          return importConversations(idb, directoryEntry);
+          return importConversations(idb, directory);
         }).then(function() {
-          return displayPath(directoryEntry);
+          return directory;
         });
       }).then(function(path) {
         console.log('done restoring from backup!');
