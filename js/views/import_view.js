@@ -10,6 +10,34 @@
     COMPLETE: 2
   };
 
+  var IMPORT_STARTED = 'importStarted';
+  var IMPORT_COMPLETE = 'importComplete';
+  var IMPORT_LOCATION = 'importLocation';
+
+  Whisper.Import = {
+    isStarted: function() {
+      return Boolean(storage.get(IMPORT_STARTED));
+    },
+    isComplete: function() {
+      return Boolean(storage.get(IMPORT_COMPLETE));
+    },
+    isIncomplete: function() {
+      return this.isStarted() && !this.isComplete();
+    },
+    start: function() {
+      storage.put(IMPORT_STARTED, true);
+    },
+    complete: function() {
+      storage.put(IMPORT_COMPLETE, true);
+    },
+    saveLocation: function(location) {
+      storage.put(IMPORT_LOCATION, location);
+    },
+    reset: function() {
+      return Whisper.Backup.clearDatabase();
+    }
+  };
+
   Whisper.ImportView = Whisper.View.extend({
     templateName: 'app-migration-screen',
     className: 'app-loading-screen',
@@ -72,22 +100,41 @@
       this.state = State.IMPORTING;
       this.render();
 
+      var importLocation;
+
       // Wait for prior database interaction to complete
       this.pending = this.pending.then(function() {
         // For resilience to interruptions, clear database both before import and after
         return Whisper.Backup.clearDatabase();
       }).then(function() {
+        Whisper.Import.start();
         return Whisper.Backup.importFromDirectory();
+      }).then(function(directory) {
+        importLocation = directory;
+
+        // Catching in-memory cache up with what's in indexeddb now...
+        // NOTE: this fires storage.onready, listened to across the app. We'll restart
+        //   to complete the install to start up cleanly with everything now in the DB.
+        return storage.fetch();
       }).then(function() {
-        // clearing any migration-related state inherited from the Chome App
-        window.storage.remove('migrationState');
-        window.storage.remove('migrationEverCompleted');
+        // Clearing any migration-related state inherited from the Chome App
+        storage.remove('migrationState');
+        storage.remove('migrationEnabled');
+        storage.remove('migrationEverCompleted');
+        storage.remove('migrationStorageLocation');
+
+        if (importLocation) {
+          Whisper.Import.saveLocation(importLocation);
+        }
+
+        Whisper.Import.complete();
 
         this.state = State.COMPLETE;
         this.render();
       }.bind(this)).catch(function(error) {
         if (error.name !== 'ChooseError') {
           this.error = error.message;
+          console.log('Error importing:', error && error.stack ? error.stack : error);
         }
 
         this.state = null;
