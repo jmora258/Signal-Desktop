@@ -47,6 +47,10 @@
       'click .cancel': 'onCancel',
     },
     initialize: function() {
+      if (Whisper.Import.isIncomplete()) {
+        this.error = true;
+      }
+
       this.render();
       this.pending = Promise.resolve();
     },

@@ -63,11 +63,6 @@
         }
         first = false;
 
-        if (Whisper.Import.isIncomplete()) {
-            console.log('Import was interrupted; erasing database then restarting');
-            return Whisper.Import.reset().then(window.restart);
-        }
-
         start();
     });
 
@@ -101,7 +96,10 @@
         Whisper.RotateSignedPreKeyListener.init(Whisper.events);
         Whisper.ExpiringMessagesListener.init(Whisper.events);
 
-        if (Whisper.Registration.everDone()) {
+        if (Whisper.Import.isIncomplete()) {
+            console.log('Import was interrupted, showing import error screen');
+            appView.openImporter();
+        } else if (Whisper.Registration.everDone()) {
             connect();
             appView.openInbox({
                 initialLoadComplete: initialLoadComplete
@@ -146,6 +144,7 @@
         window.removeEventListener('online', connect);
 
         if (!Whisper.Registration.isDone()) { return; }
+        if (Whisper.Import.isIncomplete()) { return; }
 
         if (messageReceiver) { messageReceiver.close(); }
 
