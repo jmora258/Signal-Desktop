@@ -62,7 +62,7 @@
       "description": "Button shown if the user runs into an error during import, allowing them to start over"
     },
     "importInstructions": {
-      "message": "The first step is to tell us where you previously exported your Signal data.",
+      "message": "The first step is to tell us where you previously exported your Signal data. It will be a directory whose name starts with 'Signal Export.'",
       "description": "Description of the export process"
     },
     "importing": {

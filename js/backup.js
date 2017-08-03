@@ -248,7 +248,7 @@
       var targetDir = path.join(parent, sanitized);
       fs.mkdir(targetDir, function(error) {
         if (error) {
-          return rject(error);
+          return reject(error);
         }
 
         return resolve(targetDir);
