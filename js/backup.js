@@ -675,8 +675,8 @@
     },
     backupToDirectory: function() {
       var options = {
-        title: 'Choose target directory for data',
-        buttonLabel: 'Export',
+        title: i18n('exportChooserTitle'),
+        buttonLabel: i18n('exportButton'),
       };
       return getDirectory(options).then(function(directory) {
         var idb;
@@ -701,8 +701,8 @@
     },
     importFromDirectory: function() {
       var options = {
-        title: 'Choose directory with exported data',
-        buttonLabel: 'Import',
+        title: i18n('importChooserTitle'),
+        buttonLabel: i18n('importButton'),
       };
       return getDirectory(options).then(function(directory) {
         var idb;

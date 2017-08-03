@@ -7,9 +7,17 @@
       "message": "The first step is to choose a directory to store this application's exported data. Please select an empty directory with enough free space.",
       "description": "Description of the export process"
     },
-    "export": {
+    "chooseDirectory": {
       "message": "Choose directory",
       "description": "Button to allow the user to export all data from app as part of migration process"
+    },
+    "exportButton": {
+      "message": "Export",
+      "desription": "Button shown on the choose directory dialog which starts the export process"
+    },
+    "exportChooserTitle": {
+      "message": "Choose target directory for data",
+      "description": "Title of the popup window used to select data storage location"
     },
     "exportAgain": {
       "message": "Export again",
@@ -33,9 +41,13 @@
         }
       }
     },
-    "import": {
-      "message": "Choose directory",
-      "description": "Button on screen shown when user selects to set up with exported data"
+    "importButton": {
+      "message": "Import",
+      "desription": "Button shown on the choose directory dialog which starts the import process"
+    },
+    "importChooserTitle": {
+      "message": "Choose directory with exported data",
+      "description": "Title of the popup window used to select data previously exported"
     },
     "importError": {
       "message": "Unfortunately, something went wrong during the import. First, make sure all of the originally exported files are available. Then, please submit a debug log so we can help you get migrated!",

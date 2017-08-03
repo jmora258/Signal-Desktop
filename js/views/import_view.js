@@ -80,7 +80,7 @@
           break;
         default:
           message = i18n('importInstructions');
-          importButton = i18n('import');
+          importButton = i18n('chooseDirectory');
           cancelButton = i18n('cancel');
       }
 
